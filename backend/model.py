@@ -1,33 +1,36 @@
+import os
 import torch
 import torch.nn as nn
 from torchvision import models
 
-# ── Labels ──────────────────────────────────────────────────────────────────
-CLASS_NAMES = ["Benign", "Malignant", "Normal"]
-CONFIDENCE_THRESHOLD = 0.75     # below this → flag for clinical review
+# ── Labels ────────────────────────────────────────────────────────────────────
+CLASS_NAMES          = ["Benign", "Malignant", "Normal"]
+CONFIDENCE_THRESHOLD = 0.75
 
-# ── Single branch EfficientNet-B0 model ─────────────────────────────────────
+
+# ── Adaptive EfficientNet branch ──────────────────────────────────────────────
 class UltrasoundModel(nn.Module):
     """
-    Single EfficientNet-B0 backbone for ultrasound classification.
-    Classifies into: Benign / Malignant / Normal
-    Uses transfer learning from ImageNet pretrained weights.
+    EfficientNet-B0 with:
+    - AdaptiveAvgPool2d → works on ANY input size, no cropping needed
+    - Custom classifier head
     """
     def __init__(self, num_classes=3, dropout=0.5):
         super().__init__()
+        base = models.efficientnet_b0(
+            weights=models.EfficientNet_B0_Weights.DEFAULT
+        )
 
-        # Load pretrained EfficientNet-B0
-        base = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
-
-        # Freeze early layers (keep ImageNet knowledge)
+        # Freeze early layers
         for param in list(base.parameters())[:-20]:
             param.requires_grad = False
 
-        # Keep feature extractor
         self.features = base.features
-        self.pool     = nn.AdaptiveAvgPool2d(1)   # → (batch, 1280, 1, 1)
 
-        # Custom classifier head
+        # AdaptiveAvgPool2d(1) collapses any spatial size → (batch, C, 1, 1)
+        # This is what makes the model size-agnostic
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
         self.classifier = nn.Sequential(
             nn.Linear(1280, 512),
             nn.ReLU(),
@@ -38,48 +41,47 @@ class UltrasoundModel(nn.Module):
             nn.Linear(128, num_classes)
         )
 
-        # Attention map storage (for Grad-CAM)
-        self.last_conv_output = None
-
     def forward(self, x):
-        x = self.features(x)
-        self.last_conv_output = x          # save for Grad-CAM
-        x = self.pool(x)
-        x = x.flatten(1)                   # → (batch, 1280)
-        x = self.classifier(x)
+        # x can be any spatial size — no fixed 224x224 required
+        x = self.features(x)      # → (batch, 1280, H', W')  H'/W' varies
+        x = self.pool(x)          # → (batch, 1280, 1, 1)
+        x = x.flatten(1)          # → (batch, 1280)
+        x = self.classifier(x)    # → (batch, num_classes)
         return x
 
 
-# ── Helper: load model once ──────────────────────────────────────────────────
+# ── Load model ────────────────────────────────────────────────────────────────
 _model = None
 
 def get_model():
     global _model
     if _model is None:
         _model = UltrasoundModel(num_classes=3)
+        if os.path.exists("best_model.pth"):
+            _model.load_state_dict(
+                torch.load("best_model.pth", map_location="cpu")
+            )
+            print("✅ Loaded trained weights from best_model.pth")
+        else:
+            print("⚠️  No trained weights found — using ImageNet pretrained weights")
         _model.eval()
-        print("✅ UltrasoundModel loaded with EfficientNet-B0 pretrained weights")
     return _model
 
 
-# ── Helper: run inference ────────────────────────────────────────────────────
+# ── Inference ─────────────────────────────────────────────────────────────────
 def predict(image_tensor):
     """
     Args:
-        image_tensor : shape (1, 3, 224, 224)
+        image_tensor : (1, 3, H, W) — any size
     Returns:
-        label        : str   e.g. "Malignant"
-        confidence   : float (0-1)
-        probs        : dict  e.g. {"Benign": 0.1, "Malignant": 0.85, "Normal": 0.05}
-        flagged      : bool  True if confidence < threshold
+        label, confidence, probs dict, flagged bool
     """
     model = get_model()
-
     with torch.no_grad():
-        logits = model(image_tensor)                      # (1, 3)
-        probs_tensor = torch.softmax(logits, dim=1)[0]   # (3,)
+        logits       = model(image_tensor)
+        probs_tensor = torch.softmax(logits, dim=1)[0]
 
-    probs = {CLASS_NAMES[i]: float(probs_tensor[i]) for i in range(3)}
+    probs      = {CLASS_NAMES[i]: float(probs_tensor[i]) for i in range(3)}
     best_idx   = int(torch.argmax(probs_tensor))
     confidence = float(probs_tensor[best_idx])
     label      = CLASS_NAMES[best_idx]
