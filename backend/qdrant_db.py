@@ -1,13 +1,27 @@
+import os
+import uuid
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from qdrant_client.http import models
-import uuid
 
 COLLECTION_NAME = "breast_cancer_cases"
 VECTOR_SIZE = 1280  # EfficientNet-B0 output size
 
-# ✅ LOCAL MODE (no server needed)
-client = QdrantClient(path="qdrant_data", prefer_grpc=False)
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+
+if QDRANT_URL and QDRANT_API_KEY:
+    client = QdrantClient(
+        url=QDRANT_URL,
+        api_key=QDRANT_API_KEY,
+        prefer_grpc=False
+    )
+    print(f"🌩️ Using Qdrant cloud at {QDRANT_URL}")
+else:
+    client = QdrantClient(path="qdrant_data", prefer_grpc=False)
+    print("💾 Using local Qdrant storage at qdrant_data")
+
+
 def create_collection():
     existing = [c.name for c in client.get_collections().collections]
     if COLLECTION_NAME not in existing:
@@ -28,33 +42,50 @@ def store_case(embedding: list, label: str, image_path: str):
     client.upsert(collection_name=COLLECTION_NAME, points=[point])
 
 def search_similar(embedding, top_k: int = 3):
-    """Search for similar cases in Qdrant using query_points"""
+    """Search for similar cases in Qdrant."""
     try:
-        # Convert numpy array to list if needed
-        if hasattr(embedding, 'tolist'):
+        if hasattr(embedding, "tolist"):
             embedding = embedding.tolist()
-        
-        # Use query_points - the correct method for local/REST mode
-        results = client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=embedding,
-            limit=top_k,
-            with_payload=True
-        )
+
+        if hasattr(client, "search"):
+            results = client.search(
+                collection_name=COLLECTION_NAME,
+                query_vector=embedding,
+                limit=top_k,
+                with_payload=True,
+            )
+            points = results if isinstance(results, list) else getattr(results, "points", results)
+
+        elif hasattr(client, "query_points"):
+            results = client.query_points(
+                collection_name=COLLECTION_NAME,
+                query=embedding,
+                limit=top_k,
+                with_payload=True,
+            )
+            points = getattr(results, "points", [])
+
+        elif hasattr(client, "search_points"):
+            results = client.search_points(
+                collection_name=COLLECTION_NAME,
+                query_vector=embedding,
+                limit=top_k,
+                with_payload=True,
+            )
+            points = getattr(results, "points", [])
+
+        else:
+            raise RuntimeError("No compatible Qdrant search method available")
 
         return [
             {
-                "label": result.payload.get("label", "Unknown"),
-                "image_path": result.payload.get("image_path", ""),
-                "similarity_score": round(float(result.score), 3)
+                "label": point.payload.get("label", "Unknown"),
+                "image_path": point.payload.get("image_path", ""),
+                "similarity_score": round(float(point.score), 3)
             }
-            for result in results.points
+            for point in points
         ]
 
-    except AttributeError as e:
-        print(f"⚠️ Qdrant method error: {e}")
-        # Fallback: return empty list (search not critical to functionality)
-        return []
     except Exception as e:
         print(f"⚠️ Qdrant search failed: {e}")
         import traceback
