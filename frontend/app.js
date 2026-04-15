@@ -160,7 +160,6 @@ function DoctorPage({ onLogout }) {
             </div>
           </div>
           <div style={{display:"flex",gap:"10px",alignItems:"center"}}>
-            <div className="header-badge"><span className="badge-dot"/> ETHiCARE AI 2026</div>
             <button className="logout-btn" onClick={onLogout}>Logout</button>
           </div>
         </div>
@@ -321,8 +320,6 @@ function DoctorPage({ onLogout }) {
       </main>
 
       <footer className="footer">
-        <p>AlgoPulse · ETHiCARE AI 2026 · Track 1-3 · DSCE</p>
-        <p className="footer-sub">PyTorch · Flask · React · EfficientNet-B0 · Grad-CAM</p>
       </footer>
     </div>
   );
@@ -554,7 +551,7 @@ function PatientPage({ onLogout }) {
       </main>
 
       <footer className="footer" style={{marginTop:"2rem"}}>
-        <p>AlgoPulse · ETHiCARE AI 2026 · Patient Portal</p>
+        <p>AlgoPulse · Patient Portal</p>
       </footer>
     </div>
   );

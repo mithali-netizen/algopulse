@@ -160,23 +160,34 @@ function DoctorPage({ onLogout }) {
             </div>
           </div>
           <div style={{display:"flex",gap:"10px",alignItems:"center"}}>
-            <div className="header-badge"><span className="badge-dot"/> ETHiCARE AI 2026</div>
             <button className="logout-btn" onClick={onLogout}>Logout</button>
           </div>
         </div>
       </header>
 
-      <div className="hero-strip">
-        <div className="hero-inner">
-          <div className="hero-stat"><span className="stat-num">3</span><span className="stat-label">Classes</span></div>
-          <div className="hero-divider"/>
-          <div className="hero-stat"><span className="stat-num">EfficientNet-B0</span><span className="stat-label">Architecture</span></div>
-          <div className="hero-divider"/>
-          <div className="hero-stat"><span className="stat-num">Grad-CAM</span><span className="stat-label">Explainability</span></div>
-          <div className="hero-divider"/>
-          <div className="hero-stat"><span className="stat-num">Transfer</span><span className="stat-label">Learning</span></div>
-        </div>
-      </div>
+     <div className="hero-strip">
+  <div className="hero-inner">
+    <div className="hero-stat">
+      <span className="stat-num">⚡</span>
+      <span className="stat-label">Instant Results</span>
+    </div>
+    <div className="hero-divider"/>
+    <div className="hero-stat">
+      <span className="stat-num">🧠</span>
+      <span className="stat-label">AI-Powered Analysis</span>
+    </div>
+    <div className="hero-divider"/>
+    <div className="hero-stat">
+      <span className="stat-num">👁️</span>
+      <span className="stat-label">Visual Explanations</span>
+    </div>
+    <div className="hero-divider"/>
+    <div className="hero-stat">
+      <span className="stat-num">🔒</span>
+      <span className="stat-label">Private & Secure</span>
+    </div>
+  </div>
+</div>
 
       <main className="main">
         <div className="main-grid">
@@ -306,6 +317,21 @@ function DoctorPage({ onLogout }) {
                   <p className="rec-text">{result.recommendation}</p>
                 </div>
 
+                {result.similar_cases && result.similar_cases.length > 0 && (
+                  <div className="similar-cases-section">
+                    <p className="section-label">📊 Similar Cases in Database</p>
+                    <div className="similar-cases-grid">
+                      {result.similar_cases.map((cas, idx) => (
+                        <div key={idx} className="similar-case-card">
+                          <div className="case-label">{cas.label}</div>
+                          <div className="case-similarity">Similarity: {(cas.similarity_score * 100).toFixed(1)}%</div>
+                          <div className="case-path">{cas.image_path.split('\\').pop()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="disclaimer">{result.disclaimer}</div>
               </div>
             )}
@@ -314,16 +340,12 @@ function DoctorPage({ onLogout }) {
 
         <div className="bottom-strip">
           <div className="strip-item"><span className="strip-icon">🔒</span><span>Data stays on device</span></div>
-          <div className="strip-item"><span className="strip-icon">🧠</span><span>EfficientNet-B0</span></div>
-          <div className="strip-item"><span className="strip-icon">👁️</span><span>Grad-CAM explainability</span></div>
-          <div className="strip-item"><span className="strip-icon">⚕️</span><span>Clinician always decides</span></div>
+          <div className="strip-item"><span className="strip-icon">👁️</span><span>Grad-CAM </span></div>
+          <div className="strip-item"><span className="strip-icon">⚕️</span><span> Not a medical diagnosis</span></div>
         </div>
       </main>
 
-      <footer className="footer">
-        <p>AlgoPulse · ETHiCARE AI 2026 · Track 1-3 · DSCE</p>
-        <p className="footer-sub">PyTorch · Flask · React · EfficientNet-B0 · Grad-CAM</p>
-      </footer>
+  
     </div>
   );
 }
@@ -554,7 +576,7 @@ function PatientPage({ onLogout }) {
       </main>
 
       <footer className="footer" style={{marginTop:"2rem"}}>
-        <p>AlgoPulse · ETHiCARE AI 2026 · Patient Portal</p>
+        <p>AlgoPulse · Patient Portal</p>
       </footer>
     </div>
   );

@@ -88,3 +88,20 @@ def predict(image_tensor):
     flagged    = confidence < CONFIDENCE_THRESHOLD
 
     return label, confidence, probs, flagged
+
+
+# ── Get embedding for similarity search ────────────────────────────────────────
+def get_embedding(image_tensor):
+    """
+    Extract 1280-dimensional embedding from the model.
+    Args:
+        image_tensor: (1, 3, H, W) preprocessed tensor
+    Returns:
+        numpy array of shape (1280,)
+    """
+    model = get_model()
+    with torch.no_grad():
+        x = model.features(image_tensor)
+        x = model.pool(x)
+        embedding = x.flatten(1).squeeze(0).numpy()
+    return embedding
