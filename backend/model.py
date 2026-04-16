@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import torch
 import torch.nn as nn
 from torchvision import models
@@ -6,6 +7,7 @@ from torchvision import models
 # ── Labels ────────────────────────────────────────────────────────────────────
 CLASS_NAMES          = ["Benign", "Malignant", "Normal"]
 CONFIDENCE_THRESHOLD = 0.75
+DEFAULT_WEIGHTS_NAME = "best_model.pth"
 
 
 # ── Adaptive EfficientNet branch ──────────────────────────────────────────────
@@ -57,13 +59,41 @@ def get_model():
     global _model
     if _model is None:
         _model = UltrasoundModel(num_classes=3)
-        if os.path.exists("best_model.pth"):
-            _model.load_state_dict(
-                torch.load("best_model.pth", map_location="cpu")
-            )
-            print("✅ Loaded trained weights from best_model.pth")
+        weights_candidates = []
+
+        # 1) Optional explicit path via env var
+        env_path = os.getenv("MODEL_PATH")
+        if env_path:
+            weights_candidates.append(Path(env_path))
+
+        # 2) Default: store weights next to backend files
+        backend_dir = Path(__file__).resolve().parent
+        weights_candidates.append(backend_dir / DEFAULT_WEIGHTS_NAME)
+
+        # 3) Back-compat: store weights in current working directory
+        weights_candidates.append(Path(os.getcwd()) / DEFAULT_WEIGHTS_NAME)
+
+        weights_path = next((p for p in weights_candidates if p.exists()), None)
+
+        # If user explicitly wants to run without weights, allow it.
+        allow_random_fallback = os.getenv("ALLOW_IMAGENET_FALLBACK", "").lower() in {"1", "true", "yes"}
+
+        if weights_path is None:
+            if allow_random_fallback:
+                print("⚠️  No trained weights found — using ImageNet pretrained backbone + random head")
+            else:
+                checked = [str(p) for p in weights_candidates]
+                raise FileNotFoundError(
+                    "Model weights not found. Expected a trained `best_model.pth` file. "
+                    f"Checked: {checked}. "
+                    f"Fix: place `{DEFAULT_WEIGHTS_NAME}` in the `backend/` folder, "
+                    f"or set `MODEL_PATH` to its absolute path. "
+                    "If you intentionally want to run without trained weights, set "
+                    "`ALLOW_IMAGENET_FALLBACK=1`."
+                )
         else:
-            print("⚠️  No trained weights found — using ImageNet pretrained weights")
+            _model.load_state_dict(torch.load(str(weights_path), map_location="cpu"))
+            print(f"✅ Loaded trained weights from {weights_path}")
         _model.eval()
     return _model
 

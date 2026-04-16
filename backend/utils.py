@@ -24,12 +24,18 @@ def get_dynamic_size(pil_img, max_size=512, min_size=224):
 
 def get_transform(size=None):
     """
-    If size is given → resize to that exact (w,h)
-    If size is None  → just normalize, no resize (use after manual resize)
+    Training-matching preprocessing:
+    - `Resize(224)` (keeps aspect ratio)
+    - `CenterCrop(224)`
+    - `Grayscale(3ch)`
+    - `ToTensor + Normalize`
     """
-    ops = []
-    if size is not None:
-        ops.append(transforms.Resize(size, antialias=True))   # no crop!
+    MIN_SIZE = 224
+    # Note: `size` is kept only for backward compatibility; we always follow training transforms.
+    ops = [
+        transforms.Resize(MIN_SIZE, antialias=True),
+        transforms.CenterCrop(MIN_SIZE),
+    ]
     ops += [
         transforms.Grayscale(num_output_channels=3),
         transforms.ToTensor(),
@@ -45,15 +51,15 @@ def preprocess_image(file_bytes):
     """
     Takes raw uploaded file bytes.
     Returns:
-      - tensor  : shape (1, 3, H, W) — dynamic size, no cropping
+      - tensor  : shape (1, 3, 224, 224)
       - pil_img : original PIL image for Grad-CAM overlay
-      - size    : (W, H) tuple used for this image
+      - size    : (W, H) tuple of ORIGINAL image (for UI/debug)
     """
     pil_img  = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    new_w, new_h = get_dynamic_size(pil_img)
-    transform = get_transform(size=(new_h, new_w))   # transforms.Resize takes (H, W)
-    tensor = transform(pil_img).unsqueeze(0)          # → (1, 3, H, W)
-    return tensor, pil_img, (new_w, new_h)
+    transform = get_transform()
+    tensor = transform(pil_img).unsqueeze(0)          # → (1, 3, 224, 224)
+    w, h = pil_img.size
+    return tensor, pil_img, (w, h)
 
 
 def pil_to_base64(pil_img):

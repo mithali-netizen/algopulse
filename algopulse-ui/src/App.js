@@ -1,6 +1,7 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 import "./App.css";
+import Vapi from "@vapi-ai/web";
 
 const BACKEND_URL = "http://localhost:5000";
 
@@ -360,10 +361,37 @@ function PatientPage({ onLogout }) {
   const [speaking, setSpeaking] = useState(false);
   const fileRef                 = useRef();
 
+  const vapiRef                  = useRef(null);
+  const diagnosisForVapiRef     = useRef("");
+  const VAPI_API_KEY            = process.env.REACT_APP_VAPI_API_KEY;
+  const VAPI_ASSISTANT_ID       = process.env.REACT_APP_VAPI_ASSISTANT_ID;
+
   const handleFile = (file) => {
     if (!file) return;
     setImage(file); setPreview(URL.createObjectURL(file));
     setResult(null); setError(null);
+  };
+
+  const startVoice = (diagnosisText) => {
+    diagnosisForVapiRef.current = diagnosisText;
+
+    // Prefer Vapi when configured.
+    if (VAPI_API_KEY && VAPI_ASSISTANT_ID && vapiRef.current) {
+      try {
+        setSpeaking(true);
+        vapiRef.current.start(VAPI_ASSISTANT_ID);
+      } catch (e) {
+        console.error("Vapi start failed:", e);
+        setError("Voice assistant failed to start. Try again.");
+        setSpeaking(false);
+      }
+      return;
+    }
+
+    // Fallback: browser speech synthesis.
+    setSpeaking(true);
+    speak(diagnosisText);
+    setTimeout(() => setSpeaking(false), 10000);
   };
 
   const handleSubmit = async () => {
@@ -375,10 +403,8 @@ function PatientPage({ onLogout }) {
       const res = await axios.post(`${BACKEND_URL}/predict`, formData,
         { headers: { "Content-Type": "multipart/form-data" } });
       setResult(res.data);
-      const msg = buildVoiceMessage(res.data.label, res.data.confidence);
-      setSpeaking(true);
-      speak(msg);
-      setTimeout(() => setSpeaking(false), 10000);
+      const diagnosisText = buildVoiceMessage(res.data.label, res.data.confidence);
+      startVoice(diagnosisText);
     } catch {
       setError("Something went wrong. Please ask a nurse or doctor for help.");
     } finally { setLoading(false); }
@@ -386,15 +412,64 @@ function PatientPage({ onLogout }) {
 
   const handleSpeak = () => {
     if (!result) return;
-    setSpeaking(true);
-    speak(buildVoiceMessage(result.label, result.confidence));
-    setTimeout(() => setSpeaking(false), 10000);
+
+    const diagnosisText = buildVoiceMessage(result.label, result.confidence);
+
+    // If Vapi is already active, stop it.
+    if (VAPI_API_KEY && VAPI_ASSISTANT_ID && vapiRef.current && speaking) {
+      try { vapiRef.current.stop(); } catch {}
+      setSpeaking(false);
+      return;
+    }
+
+    startVoice(diagnosisText);
   };
 
   const reset = () => {
     setImage(null); setPreview(null); setResult(null); setError(null);
-    window.speechSynthesis.cancel(); setSpeaking(false);
+    try { vapiRef.current?.stop?.(); } catch {}
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    setSpeaking(false);
   };
+
+  // Initialize Vapi once per page mount.
+  useEffect(() => {
+    if (!VAPI_API_KEY || !VAPI_ASSISTANT_ID) return;
+
+    const vapi = new Vapi(VAPI_API_KEY);
+    vapiRef.current = vapi;
+
+    vapi.on("call-start", () => {
+      setSpeaking(true);
+
+      const msg = diagnosisForVapiRef.current;
+      if (msg) {
+        try {
+          console.log("Vapi call-start: saying diagnosis", msg);
+          // Force the assistant to say the diagnosis and end the call after spoken.
+          // This avoids "only the first sentence" behavior caused by assistant prompting flow.
+          // Don't end the call immediately; ending too early can truncate long messages.
+          vapi.say(msg, false, true, true);
+        } catch (e) {
+          console.error("Vapi say failed:", e);
+        }
+      }
+    });
+
+    vapi.on("call-end", () => {
+      console.log("Vapi call-end");
+      setSpeaking(false);
+    });
+    vapi.on("error", (e) => {
+      console.error("Vapi error:", e);
+      setSpeaking(false);
+      setError("Voice assistant error. Please try again.");
+    });
+
+    return () => {
+      try { vapi.stop(); } catch {}
+    };
+  }, [VAPI_API_KEY, VAPI_ASSISTANT_ID]);
 
   const pct = (v) => `${(v * 100).toFixed(0)}%`;
 
@@ -516,7 +591,7 @@ function PatientPage({ onLogout }) {
               <div className="voice-section">
                 <button className={`voice-btn ${speaking?"speaking":""}`} onClick={handleSpeak}>
                   <span className="voice-icon">{speaking ? "🔊" : "🔈"}</span>
-                  <span>{speaking ? "Speaking... tap to replay" : "Tap to hear your result"}</span>
+                  <span>{speaking ? "Voice running... tap to stop" : "Tap to hear your result"}</span>
                 </button>
                 <p className="voice-hint">
                   🎧 This voice feature helps patients who have difficulty reading, elderly patients, and people in areas with limited healthcare access.

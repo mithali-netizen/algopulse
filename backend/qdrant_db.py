@@ -1,5 +1,6 @@
 import os
 import uuid
+from pathlib import Path
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
@@ -18,11 +19,14 @@ if QDRANT_URL and QDRANT_API_KEY:
     )
     print(f"🌩️ Using Qdrant cloud at {QDRANT_URL}")
 else:
-    client = QdrantClient(path="qdrant_data", prefer_grpc=False)
-    print("💾 Using local Qdrant storage at qdrant_data")
+    backend_dir = Path(__file__).resolve().parent
+    local_path = backend_dir / "qdrant_data"
+    client = QdrantClient(path=str(local_path), prefer_grpc=False)
+    print(f"💾 Using local Qdrant storage at {local_path}")
 
 
 def create_collection():
+    # Create collection if it's missing. Safe to call multiple times.
     existing = [c.name for c in client.get_collections().collections]
     if COLLECTION_NAME not in existing:
         client.create_collection(
@@ -44,6 +48,20 @@ def store_case(embedding: list, label: str, image_path: str):
 def search_similar(embedding, top_k: int = 3):
     """Search for similar cases in Qdrant."""
     try:
+        # Auto-create collection so the app doesn't fail with "Collection not found".
+        existing = [c.name for c in client.get_collections().collections]
+        if COLLECTION_NAME not in existing:
+            create_collection()
+
+        # If collection is empty, return early to avoid noise.
+        try:
+            cnt = client.count(collection_name=COLLECTION_NAME).count
+            if int(cnt) == 0:
+                return []
+        except Exception:
+            # Some qdrant-client versions may not support count() for local.
+            pass
+
         if hasattr(embedding, "tolist"):
             embedding = embedding.tolist()
 
