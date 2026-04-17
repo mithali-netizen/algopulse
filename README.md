@@ -24,6 +24,8 @@ Unlike traditional AI systems that act as black boxes, ALGOPULSE focuses on:
 ✨ **Doctor Dashboard with Similar Case Retrieval (Qdrant)**
 ✨ **Patient Dashboard with Voice Assistant (Vapi)**
 ✨ **Fast and Interactive Web Application**
+✨ **Bilingual Assistant - English and Hindi**
+
 
 ---
 
