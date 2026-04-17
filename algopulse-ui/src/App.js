@@ -10,14 +10,6 @@ const USERS = {
   patient: { password: "patient123", role: "patient" },
 };
 
-function speak(text) {
-  if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.rate = 0.9; utter.pitch = 1; utter.volume = 1;
-  window.speechSynthesis.speak(utter);
-}
-
 function buildVoiceMessage(label, confidence) {
   const pct = (confidence * 100).toFixed(0);
   if (label === "Malignant")
@@ -27,6 +19,18 @@ function buildVoiceMessage(label, confidence) {
   if (label === "Normal")
     return `The analysis indicates a normal result with ${pct} percent confidence. No abnormal growth was detected in the scan. Please continue your regular health checkups as advised by your doctor.`;
   return `The result is inconclusive with ${pct} percent confidence. Please visit your doctor for further examination.`;
+}
+
+function normalizeEnvValue(value) {
+  return value?.trim?.() || "";
+}
+
+function isPlaceholderEnvValue(value) {
+  return value.startsWith("YOUR_");
+}
+
+function getCaseImageName(imagePath) {
+  return imagePath.split(/[\\/]/).pop();
 }
 
 // LOGIN PAGE
@@ -131,6 +135,11 @@ function DoctorPage({ onLogout }) {
     } catch (err) {
       setError(err.response?.data?.error || "Server error. Make sure backend is running.");
     } finally { setLoading(false); }
+  };
+
+  const openSimilarCase = (caseUrl) => {
+    if (!caseUrl) return;
+    window.open(caseUrl, "_blank", "noopener,noreferrer");
   };
 
   const reset = () => { setImage(null); setPreview(null); setResult(null); setError(null); };
@@ -321,13 +330,20 @@ function DoctorPage({ onLogout }) {
                 {result.similar_cases && result.similar_cases.length > 0 && (
                   <div className="similar-cases-section">
                     <p className="section-label">📊 Similar Cases in Database</p>
-                    <div className="similar-cases-grid">
-                      {result.similar_cases.map((cas, idx) => (
-                        <div key={idx} className="similar-case-card">
+                      <div className="similar-cases-grid">
+                        {result.similar_cases.map((cas, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          className="similar-case-card"
+                          onClick={() => openSimilarCase(cas.image_url || `${BACKEND_URL}/case-image?name=${encodeURIComponent(cas.image_name || getCaseImageName(cas.image_path))}`)}
+                          title={`Open ${getCaseImageName(cas.image_path)}`}
+                        >
                           <div className="case-label">{cas.label}</div>
                           <div className="case-similarity">Similarity: {(cas.similarity_score * 100).toFixed(1)}%</div>
-                          <div className="case-path">{cas.image_path.split('\\').pop()}</div>
-                        </div>
+                          <div className="case-path">{getCaseImageName(cas.image_path)}</div>
+                          <div className="case-open-hint">Click to open image</div>
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -363,8 +379,17 @@ function PatientPage({ onLogout }) {
 
   const vapiRef                  = useRef(null);
   const diagnosisForVapiRef     = useRef("");
-  const VAPI_API_KEY            = process.env.REACT_APP_VAPI_API_KEY;
-  const VAPI_ASSISTANT_ID       = process.env.REACT_APP_VAPI_ASSISTANT_ID;
+  const VAPI_API_KEY            = normalizeEnvValue(process.env.REACT_APP_VAPI_API_KEY);
+  const VAPI_ASSISTANT_ID       = normalizeEnvValue(process.env.REACT_APP_VAPI_ASSISTANT_ID);
+  const isVapiConfigured        =
+    VAPI_API_KEY &&
+    VAPI_ASSISTANT_ID &&
+    !isPlaceholderEnvValue(VAPI_API_KEY) &&
+    !isPlaceholderEnvValue(VAPI_ASSISTANT_ID);
+  const voiceModeLabel          = isVapiConfigured ? "Vapi voice assistant ready" : "Browser voice fallback active";
+  const voiceSetupHint          = isVapiConfigured
+    ? "Voice is using your Vapi assistant."
+    : "Add REACT_APP_VAPI_API_KEY and REACT_APP_VAPI_ASSISTANT_ID to algopulse-ui/.env, then restart npm start to enable Vapi.";
 
   const handleFile = (file) => {
     if (!file) return;
@@ -376,9 +401,10 @@ function PatientPage({ onLogout }) {
     diagnosisForVapiRef.current = diagnosisText;
 
     // Prefer Vapi when configured.
-    if (VAPI_API_KEY && VAPI_ASSISTANT_ID && vapiRef.current) {
+    if (isVapiConfigured && vapiRef.current) {
       try {
         setSpeaking(true);
+        setError(null);
         vapiRef.current.start(VAPI_ASSISTANT_ID);
       } catch (e) {
         console.error("Vapi start failed:", e);
@@ -390,8 +416,22 @@ function PatientPage({ onLogout }) {
 
     // Fallback: browser speech synthesis.
     setSpeaking(true);
-    speak(diagnosisText);
-    setTimeout(() => setSpeaking(false), 10000);
+    if (!window.speechSynthesis) {
+      setError("This browser does not support voice playback.");
+      setSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(diagnosisText);
+    utter.rate = 0.9;
+    utter.pitch = 1;
+    utter.volume = 1;
+    utter.onend = () => setSpeaking(false);
+    utter.onerror = () => {
+      setError("Browser voice playback failed. Please try again.");
+      setSpeaking(false);
+    };
+    window.speechSynthesis.speak(utter);
   };
 
   const handleSubmit = async () => {
@@ -416,7 +456,7 @@ function PatientPage({ onLogout }) {
     const diagnosisText = buildVoiceMessage(result.label, result.confidence);
 
     // If Vapi is already active, stop it.
-    if (VAPI_API_KEY && VAPI_ASSISTANT_ID && vapiRef.current && speaking) {
+    if (isVapiConfigured && vapiRef.current && speaking) {
       try { vapiRef.current.stop(); } catch {}
       setSpeaking(false);
       return;
@@ -434,7 +474,7 @@ function PatientPage({ onLogout }) {
 
   // Initialize Vapi once per page mount.
   useEffect(() => {
-    if (!VAPI_API_KEY || !VAPI_ASSISTANT_ID) return;
+    if (!isVapiConfigured) return;
 
     const vapi = new Vapi(VAPI_API_KEY);
     vapiRef.current = vapi;
@@ -449,27 +489,40 @@ function PatientPage({ onLogout }) {
           // Force the assistant to say the diagnosis and end the call after spoken.
           // This avoids "only the first sentence" behavior caused by assistant prompting flow.
           // Don't end the call immediately; ending too early can truncate long messages.
-          vapi.say(msg, false, true, true);
+          vapi.say(msg, true, true, true);
         } catch (e) {
           console.error("Vapi say failed:", e);
         }
       }
     });
 
+    vapi.on("call-start-failed", (event) => {
+      console.error("Vapi call-start-failed:", event);
+      setSpeaking(false);
+      setError(`Voice assistant failed to connect: ${event?.error || "unknown error"}.`);
+    });
+
     vapi.on("call-end", () => {
       console.log("Vapi call-end");
       setSpeaking(false);
     });
+    vapi.on("message", (message) => {
+      if (message?.type === "status-update" && message?.status === "ended" && message?.endedReason) {
+        console.log("Vapi call ended:", message.endedReason);
+      }
+    });
     vapi.on("error", (e) => {
       console.error("Vapi error:", e);
       setSpeaking(false);
-      setError("Voice assistant error. Please try again.");
+      const details = e?.errorMsg || e?.message || e?.toString?.();
+      setError(details ? `Voice assistant error: ${details}` : "Voice assistant error. Please try again.");
     });
 
     return () => {
       try { vapi.stop(); } catch {}
+      vapiRef.current = null;
     };
-  }, [VAPI_API_KEY, VAPI_ASSISTANT_ID]);
+  }, [VAPI_API_KEY, isVapiConfigured]);
 
   const pct = (v) => `${(v * 100).toFixed(0)}%`;
 
@@ -593,8 +646,9 @@ function PatientPage({ onLogout }) {
                   <span className="voice-icon">{speaking ? "🔊" : "🔈"}</span>
                   <span>{speaking ? "Voice running... tap to stop" : "Tap to hear your result"}</span>
                 </button>
+                <p className={`voice-status ${isVapiConfigured ? "ready" : "fallback"}`}>{voiceModeLabel}</p>
                 <p className="voice-hint">
-                  🎧 This voice feature helps patients who have difficulty reading, elderly patients, and people in areas with limited healthcare access.
+                  {voiceSetupHint}
                 </p>
               </div>
 
