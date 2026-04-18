@@ -379,6 +379,8 @@ function PatientPage({ onLogout }) {
 
   const vapiRef                  = useRef(null);
   const diagnosisForVapiRef     = useRef("");
+  const vapiStartingRef         = useRef(false);
+  const vapiEndingRef           = useRef(false);
   const VAPI_API_KEY            = normalizeEnvValue(process.env.REACT_APP_VAPI_API_KEY);
   const VAPI_ASSISTANT_ID       = normalizeEnvValue(process.env.REACT_APP_VAPI_ASSISTANT_ID);
   const isVapiConfigured        =
@@ -397,19 +399,40 @@ function PatientPage({ onLogout }) {
     setResult(null); setError(null);
   };
 
-  const startVoice = (diagnosisText) => {
+  const isExpectedVapiEndError = (err) => {
+    const message =
+      err?.error?.message ||
+      err?.errorMsg ||
+      err?.message ||
+      err?.toString?.() ||
+      "";
+    const normalized = String(message).toLowerCase();
+
+    return (
+      normalized.includes("meeting ended due to ejection") ||
+      normalized.includes("meeting has ended")
+    );
+  };
+
+  const startVoice = async (diagnosisText) => {
     diagnosisForVapiRef.current = diagnosisText;
 
     // Prefer Vapi when configured.
     if (isVapiConfigured && vapiRef.current) {
+      if (vapiStartingRef.current) return;
+
       try {
+        vapiStartingRef.current = true;
+        vapiEndingRef.current = false;
         setSpeaking(true);
         setError(null);
-        vapiRef.current.start(VAPI_ASSISTANT_ID);
+        await vapiRef.current.start(VAPI_ASSISTANT_ID);
       } catch (e) {
         console.error("Vapi start failed:", e);
         setError("Voice assistant failed to start. Try again.");
         setSpeaking(false);
+      } finally {
+        vapiStartingRef.current = false;
       }
       return;
     }
@@ -444,7 +467,7 @@ function PatientPage({ onLogout }) {
         { headers: { "Content-Type": "multipart/form-data" } });
       setResult(res.data);
       const diagnosisText = buildVoiceMessage(res.data.label, res.data.confidence);
-      startVoice(diagnosisText);
+      await startVoice(diagnosisText);
     } catch {
       setError("Something went wrong. Please ask a nurse or doctor for help.");
     } finally { setLoading(false); }
@@ -457,6 +480,7 @@ function PatientPage({ onLogout }) {
 
     // If Vapi is already active, stop it.
     if (isVapiConfigured && vapiRef.current && speaking) {
+      vapiEndingRef.current = true;
       try { vapiRef.current.stop(); } catch {}
       setSpeaking(false);
       return;
@@ -467,6 +491,7 @@ function PatientPage({ onLogout }) {
 
   const reset = () => {
     setImage(null); setPreview(null); setResult(null); setError(null);
+    vapiEndingRef.current = true;
     try { vapiRef.current?.stop?.(); } catch {}
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     setSpeaking(false);
@@ -481,6 +506,7 @@ function PatientPage({ onLogout }) {
 
     vapi.on("call-start", () => {
       setSpeaking(true);
+      vapiEndingRef.current = false;
 
       const msg = diagnosisForVapiRef.current;
       if (msg) {
@@ -504,21 +530,35 @@ function PatientPage({ onLogout }) {
 
     vapi.on("call-end", () => {
       console.log("Vapi call-end");
+      vapiEndingRef.current = false;
       setSpeaking(false);
     });
     vapi.on("message", (message) => {
       if (message?.type === "status-update" && message?.status === "ended" && message?.endedReason) {
         console.log("Vapi call ended:", message.endedReason);
+        if (message.endedReason === "customer-ended-call") {
+          vapiEndingRef.current = true;
+        }
       }
     });
     vapi.on("error", (e) => {
+      if (vapiEndingRef.current && isExpectedVapiEndError(e)) {
+        console.log("Ignoring expected Vapi end error:", e);
+        return;
+      }
+
       console.error("Vapi error:", e);
       setSpeaking(false);
-      const details = e?.errorMsg || e?.message || e?.toString?.();
+      const details =
+        e?.error?.message ||
+        e?.errorMsg ||
+        e?.message ||
+        e?.toString?.();
       setError(details ? `Voice assistant error: ${details}` : "Voice assistant error. Please try again.");
     });
 
     return () => {
+      vapiEndingRef.current = true;
       try { vapi.stop(); } catch {}
       vapiRef.current = null;
     };

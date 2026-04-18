@@ -1,43 +1,60 @@
 import io
 import base64
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 import torchvision.transforms as transforms
 
-# ── Dynamic size — no cropping, just resize to nearest multiple of 32 ─────────
-def get_dynamic_size(pil_img, max_size=512, min_size=224):
-    """
-    Returns (width, height) that:
-    - Keeps original aspect ratio
-    - Fits within max_size x max_size
-    - Is at least min_size on the shorter side
-    - Each dimension is a multiple of 32 (required by EfficientNet)
-    """
-    w, h = pil_img.size
-    scale = min(max_size / w, max_size / h)
-    if min(w, h) * scale < min_size:
-        scale = min_size / min(w, h)
-    new_w = max(32, int(w * scale) // 32 * 32)
-    new_h = max(32, int(h * scale) // 32 * 32)
-    return new_w, new_h
+TARGET_SIZE = 224
 
 
-def get_transform(size=None):
+def resize_and_pad(pil_img, size=TARGET_SIZE, fill=(0, 0, 0)):
     """
-    Training-matching preprocessing:
-    - `Resize(224)` (keeps aspect ratio)
-    - `CenterCrop(224)`
-    - `Grayscale(3ch)`
-    - `ToTensor + Normalize`
+    Preserve the whole image by resizing to fit within a square canvas and
+    padding the remaining area instead of cropping.
     """
-    MIN_SIZE = 224
-    # Note: `size` is kept only for backward compatibility; we always follow training transforms.
+    if pil_img.mode != "RGB":
+        pil_img = pil_img.convert("RGB")
+
+    width, height = pil_img.size
+    if width == 0 or height == 0:
+        raise ValueError("Invalid image size")
+
+    scale = min(size / width, size / height)
+    new_width = max(1, round(width * scale))
+    new_height = max(1, round(height * scale))
+
+    resized = pil_img.resize((new_width, new_height), Image.Resampling.BILINEAR)
+
+    pad_left = (size - new_width) // 2
+    pad_top = (size - new_height) // 2
+    pad_right = size - new_width - pad_left
+    pad_bottom = size - new_height - pad_top
+
+    return ImageOps.expand(
+        resized,
+        border=(pad_left, pad_top, pad_right, pad_bottom),
+        fill=fill,
+    )
+
+
+def get_transform(augment=False):
+    """
+    Shared preprocessing for training and inference:
+    - preserve aspect ratio
+    - avoid cropping by padding to a fixed square
+    - convert to tensor and normalize
+    """
     ops = [
-        transforms.Resize(MIN_SIZE, antialias=True),
-        transforms.CenterCrop(MIN_SIZE),
-    ]
-    ops += [
+        transforms.Lambda(lambda img: resize_and_pad(img, TARGET_SIZE)),
         transforms.Grayscale(num_output_channels=3),
+    ]
+    if augment:
+        ops += [
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(contrast=0.3, brightness=0.2),
+        ]
+    ops += [
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
@@ -51,12 +68,12 @@ def preprocess_image(file_bytes):
     """
     Takes raw uploaded file bytes.
     Returns:
-      - tensor  : shape (1, 3, 224, 224)
+      - tensor  : shape (1, 3, 224, 224) without cropping source content
       - pil_img : original PIL image for Grad-CAM overlay
       - size    : (W, H) tuple of ORIGINAL image (for UI/debug)
     """
     pil_img  = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    transform = get_transform()
+    transform = get_transform(augment=False)
     tensor = transform(pil_img).unsqueeze(0)          # → (1, 3, 224, 224)
     w, h = pil_img.size
     return tensor, pil_img, (w, h)

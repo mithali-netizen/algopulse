@@ -2,8 +2,8 @@ import os
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, ConcatDataset
-from torchvision import datasets, transforms
 from model import UltrasoundModel
+from utils import get_transform
 import matplotlib.pyplot as plt
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -15,28 +15,6 @@ BATCH_SIZE     = 16
 EPOCHS         = 10
 LR             = 0.001
 MODEL_SAVE     = "best_model.pth"
-MIN_SIZE       = 224
-
-# ── TRANSFORMS ────────────────────────────────────────────────────────────────
-def make_transform(augment=False):
-    ops = [
-        transforms.Resize(MIN_SIZE, antialias=True),
-        transforms.CenterCrop(MIN_SIZE),
-        transforms.Grayscale(num_output_channels=3),
-    ]
-    if augment:
-        ops += [
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(contrast=0.3, brightness=0.2),
-        ]
-    ops += [
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406],
-                             [0.229, 0.224, 0.225])
-    ]
-    return transforms.Compose(ops)
-
 # ── LOAD EACH CLASS FOLDER SEPARATELY ────────────────────────────────────────
 # This avoids the "test folder treated as class" problem
 print("📂 Loading dataset...")
@@ -61,8 +39,8 @@ class LabeledFolder(torch.utils.data.Dataset):
         img = Image.open(self.files[idx]).convert("RGB")
         return self.transform(img), self.label
 
-transform_train = make_transform(augment=True)
-transform_val   = make_transform(augment=False)
+transform_train = get_transform(augment=True)
+transform_val   = get_transform(augment=False)
 
 benign_data    = LabeledFolder(BENIGN_PATH,    0, transform_train)
 malignant_data = LabeledFolder(MALIGNANT_PATH, 1, transform_train)
@@ -144,7 +122,7 @@ print(f"📦 Model saved → {MODEL_SAVE}")
 # ── TEST SET ──────────────────────────────────────────────────────────────────
 print("\n📊 Evaluating test set...")
 try:
-    test_data   = LabeledFolder(TEST_PATH, 0, make_transform(augment=False))
+    test_data   = LabeledFolder(TEST_PATH, 0, get_transform(augment=False))
     test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
     model.load_state_dict(torch.load(MODEL_SAVE, map_location=device))
     model.eval()
